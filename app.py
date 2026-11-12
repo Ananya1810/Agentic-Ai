@@ -5,8 +5,12 @@ from datetime import datetime, timezone
 import pandas as pd
 import streamlit as st
 
-from analytics import prepare_reviews, summarize_reviews
-from analytics import analyze_product, build_product_roadmap
+from Analytics import (
+    prepare_reviews,
+    summarize_reviews,
+    analyze_product,
+    build_product_roadmap,
+)
 
 
 st.set_page_config(
@@ -86,6 +90,10 @@ except Exception as exc:
     st.info("Check that the file is a valid .xlsx workbook and refresh the page.")
     st.stop()
 
+with st.expander("View source Excel data", expanded=False):
+    st.caption(f"Showing {len(raw):,} rows loaded from {DATA_PATH.name}.")
+    st.dataframe(raw, use_container_width=True, hide_index=True)
+
 if "extra_reviews" not in st.session_state:
     st.session_state.extra_reviews = pd.DataFrame(columns=reviews.columns)
 if "loaded_uploads" not in st.session_state:
@@ -149,6 +157,49 @@ st.markdown('<div class="section-title">Product analysis</div>', unsafe_allow_ht
 st.markdown('<div class="section-sub">Select a product for its rating profile, recurring words, and representative customer feedback.</div>', unsafe_allow_html=True)
 products = sorted(name for name in reviews["ProductName"].dropna().unique().tolist() if str(name).strip())
 if products:
+    priority_rows = []
+    for product in products:
+        product_data = reviews[reviews["ProductName"] == product]
+        summary = summarize_reviews(product_data)
+        if summary["attention_count"] > 0:
+            priority = "High"
+        elif summary["average_rating"] < 4:
+            priority = "Medium"
+        else:
+            priority = "Low"
+        priority_rows.append({
+            "Product": product,
+            "Reviews": summary["count"],
+            "Average rating": round(summary["average_rating"], 1),
+            "1–2 star reviews": summary["attention_count"],
+            "Priority": priority,
+        })
+
+    priority_table = pd.DataFrame(priority_rows)
+    priority_order = ("High", "Medium", "Low")
+    priority_tabs = st.tabs([
+        f"{priority} priority ({(priority_table['Priority'] == priority).sum()})"
+        for priority in priority_order
+    ])
+    st.markdown("### Product priorities")
+    st.caption(
+        "High: at least one 1–2 star review. Medium: no 1–2 star reviews and "
+        "average rating below 4. Low: no 1–2 star reviews and average rating of 4 or higher."
+    )
+    for tab, priority in zip(priority_tabs, priority_order):
+        with tab:
+            products_in_priority = priority_table[
+                priority_table["Priority"] == priority
+            ].drop(columns="Priority")
+            if products_in_priority.empty:
+                st.info(f"No {priority.lower()} priority products.")
+            else:
+                st.dataframe(
+                    products_in_priority,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
     selected_product = st.selectbox("Choose a product", products, key="product_analysis_selector")
     product_reviews = reviews[reviews["ProductName"] == selected_product]
     product_summary = analyze_product(product_reviews)
@@ -179,9 +230,6 @@ if products:
         else:
             st.caption("No 1–2 star reviews yet.")
     st.caption("This product analysis is generated from ratings and review text using simple, transparent rules.")
-else:
-    st.info("Add reviews with product names to see product analysis.")
-
     st.markdown("**Recommended roadmap**")
     roadmap = build_product_roadmap(product_reviews)
     roadmap_cols = st.columns(3)
@@ -191,3 +239,5 @@ else:
             for item in actions:
                 st.markdown(f"- {item['action']}")
                 st.caption(item["evidence"])
+else:
+    st.info("Add reviews with product names to see product analysis.")
